@@ -1,0 +1,2 @@
+id,password,status,score,studentName,dob,parentName,parentEmail,parentPhone,school,studentClass,teacherName,teacherEmail,teacherPhone
+FAZSC2001,810x1dxg,active,0,John,2010-01-01,Jane,jane@example.com,123,School,Primary 4,Bob,bob@example.com,321
