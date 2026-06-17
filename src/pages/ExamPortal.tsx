@@ -16,30 +16,73 @@ export default function ExamPortal() {
   const [examStatus, setExamStatus] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [isStarted, setIsStarted] = useState(false);
+  const [startTime, setStartTime] = useState<number | null>(null);
   const [currentQ, setCurrentQ] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
+  const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
 
   const navigate = useNavigate();
+
+  // Create refs to avoid closure stale values in timers
+  const answersRef = React.useRef(answers);
+  const studentRef = React.useRef(student);
+  const isSubmittedRef = React.useRef(isSubmitted);
+  const questionsRef = React.useRef(questions);
+  const currentQRef = React.useRef(currentQ);
+
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+
+  useEffect(() => {
+    studentRef.current = student;
+  }, [student]);
+
+  useEffect(() => {
+    isSubmittedRef.current = isSubmitted;
+  }, [isSubmitted]);
+
+  useEffect(() => {
+    questionsRef.current = questions;
+  }, [questions]);
+
+  useEffect(() => {
+    currentQRef.current = currentQ;
+  }, [currentQ]);
+
+  const fetchQuestionsOnly = async () => {
+    try {
+      const res = await fetch("/api/exam/questions");
+      const data = await res.json();
+      if(data.success && data.questions.length > 0) {
+        setQuestions(data.questions);
+      }
+    } catch {
+      console.log("Failed to load questions on restore");
+    }
+  };
 
   useEffect(() => {
     const stored = localStorage.getItem("fazStudent");
     if (stored) {
-      setStudent(JSON.parse(stored));
+      const parsedStudent = JSON.parse(stored);
+      setStudent(parsedStudent);
       checkExamStatus();
+
+      const storedStart = localStorage.getItem(`fazExamStartedAt_${parsedStudent.id}`);
+      if (storedStart) {
+        setStartTime(parseInt(storedStart, 10));
+        setIsStarted(true);
+        fetchQuestionsOnly();
+        const storedAns = localStorage.getItem(`fazExamAnswers_${parsedStudent.id}`);
+        if (storedAns) {
+          setAnswers(JSON.parse(storedAns));
+        }
+      }
     }
   }, []);
-
-  useEffect(() => {
-    let timer: any;
-    if (isStarted && timeLeft > 0 && !isSubmitted) {
-      timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
-    } else if (timeLeft === 0 && isStarted && !isSubmitted) {
-       handleSubmit(); // Auto submit
-    }
-    return () => clearInterval(timer);
-  }, [isStarted, timeLeft, isSubmitted]);
 
   const checkExamStatus = async () => {
     try {
@@ -53,14 +96,73 @@ export default function ExamPortal() {
     }
   };
 
+  // Continuous background status polling (allows live time updates to sync immediately)
   useEffect(() => {
-    if(student && !isStarted && !isSubmitted) {
+    if (student && !isSubmitted) {
       const interval = setInterval(() => {
         checkExamStatus();
       }, 5000);
       return () => clearInterval(interval);
     }
-  }, [student, isStarted, isSubmitted]);
+  }, [student, isSubmitted]);
+
+  const handleSubmit = async () => {
+    if (isSubmittedRef.current || !studentRef.current) return;
+    try {
+      const response = await fetch("/api/grade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentId: studentRef.current.id, answers: answersRef.current })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setStudent({ ...studentRef.current, score: data.score });
+        setIsSubmitted(true);
+        localStorage.removeItem(`fazExamStartedAt_${studentRef.current.id}`);
+        localStorage.removeItem(`fazExamAnswers_${studentRef.current.id}`);
+      }
+    } catch (e) {
+      alert("Submission failed. Retrying...");
+    }
+  };
+
+  const handleSubmitRef = React.useRef(handleSubmit);
+  useEffect(() => {
+    handleSubmitRef.current = handleSubmit;
+  }, [handleSubmit]);
+
+  const examTimeMinutes = examStatus?.timeMinutes || 30;
+
+  // Live Timer Count-down useEffect
+  useEffect(() => {
+    let timer: any;
+    if (isStarted && startTime && examTimeMinutes && !isSubmitted) {
+      const calculateTimeLeft = () => {
+        const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+        const totalAllottedSeconds = examTimeMinutes * 60;
+        const remaining = totalAllottedSeconds - elapsedSeconds;
+        return Math.max(0, remaining);
+      };
+
+      const initialRemaining = calculateTimeLeft();
+      setTimeLeft(initialRemaining);
+
+      if (initialRemaining <= 0) {
+        handleSubmitRef.current();
+        return;
+      }
+
+      timer = setInterval(() => {
+        const rem = calculateTimeLeft();
+        setTimeLeft(rem);
+        if (rem <= 0) {
+          clearInterval(timer);
+          handleSubmitRef.current(); // Auto submit
+        }
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [isStarted, startTime, examTimeMinutes, isSubmitted]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,8 +191,16 @@ export default function ExamPortal() {
   };
 
   const handleLogout = () => {
+    if (student) {
+      localStorage.removeItem(`fazExamStartedAt_${student.id}`);
+      localStorage.removeItem(`fazExamAnswers_${student.id}`);
+    }
     localStorage.removeItem("fazStudent");
     setStudent(null);
+    setIsStarted(false);
+    setStartTime(null);
+    setAnswers({});
+    setCurrentQ(0);
   };
 
   const handleStart = async () => {
@@ -99,7 +209,11 @@ export default function ExamPortal() {
       const data = await res.json();
       if(data.success && data.questions.length > 0) {
         setQuestions(data.questions);
-        setTimeLeft(examStatus.timeMinutes * 60);
+        const now = Date.now();
+        setStartTime(now);
+        if (student) {
+          localStorage.setItem(`fazExamStartedAt_${student.id}`, now.toString());
+        }
         setIsStarted(true);
       } else {
         alert("No questions available or exam is offline.");
@@ -110,29 +224,15 @@ export default function ExamPortal() {
   };
 
   const handleOptionSelect = (qId: string, opt: string) => {
-    setAnswers({ ...answers, [qId]: opt });
+    const updatedAnswers = { ...answers, [qId]: opt };
+    setAnswers(updatedAnswers);
+    if (student) {
+      localStorage.setItem(`fazExamAnswers_${student.id}`, JSON.stringify(updatedAnswers));
+    }
   };
 
   const handleNext = () => {
     if (currentQ < questions.length - 1) setCurrentQ(currentQ + 1);
-  };
-
-  const handleSubmit = async () => {
-    if(isSubmitted) return;
-    try {
-      const response = await fetch("/api/grade", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ studentId: student.id, answers })
-      });
-      const data = await response.json();
-      if (data.success) {
-        setStudent({ ...student, score: data.score });
-        setIsSubmitted(true);
-      }
-    } catch (e) {
-      alert("Submission failed. Retrying...");
-    }
   };
 
   if (!student) {
@@ -209,6 +309,11 @@ export default function ExamPortal() {
            <div className="absolute top-4 right-4"><button onClick={handleLogout} className="text-sm text-slate-400 hover:text-red-500">Logout</button></div>
            
            <img src="https://i.postimg.cc/s2y1xL74/logo.jpg" alt="FAZ College" className="w-24 h-24 mx-auto mb-6 object-contain" />
+           {examStatus && (
+             <div className="mb-4 inline-block bg-royal text-white px-4 py-1.5 rounded-full font-bold text-xs tracking-wider uppercase shadow-sm border border-royal/10">
+               🏆 Scholars' Challenge Round {examStatus.round}
+             </div>
+           )}
            <h2 className="text-2xl font-extrabold text-royal tracking-tight mb-2">Welcome, {student.studentName}!</h2>
            <p className="text-slate-500 font-mono mb-8 text-sm">ID: {student.id}</p>
 
@@ -229,7 +334,7 @@ export default function ExamPortal() {
                    <li>Auto-submit enabled at 00:00</li>
                  </ul>
                </div>
-               <div className="flex space-x-4">
+               <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                  <button onClick={handleStart} className="flex-1 py-4 bg-brand-red text-white text-lg font-bold rounded-xl hover:bg-red-700 transition">Attempt Now</button>
                  <button onClick={handleLogout} className="flex-1 py-4 bg-slate-100 text-slate-700 text-lg font-bold rounded-xl hover:bg-slate-200 transition">Come Back Later</button>
                </div>
@@ -241,6 +346,19 @@ export default function ExamPortal() {
   }
 
   const question = questions[currentQ];
+
+  if (isStarted && (questions.length === 0 || !question)) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-3xl shadow-lg max-w-sm w-full text-center border border-slate-100 flex flex-col items-center">
+          <Loader2 className="w-12 h-12 text-royal animate-spin mb-4" />
+          <h3 className="font-bold text-slate-800 text-lg mb-2">Loading questions</h3>
+          <p className="text-slate-500 text-sm">Please wait while the challenge content is retrieved...</p>
+        </div>
+      </div>
+    );
+  }
+
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, '0');
     const s = (secs % 60).toString().padStart(2, '0');
@@ -249,12 +367,27 @@ export default function ExamPortal() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans">
+      {examStatus && (
+        <div className="bg-royal text-white text-center py-2.5 px-4 font-bold text-xs sm:text-sm uppercase tracking-wider relative flex justify-center items-center gap-2 shadow-sm">
+          <span>🏆 Scholars' Challenge Round {examStatus.round}</span>
+          <span className="bg-white/20 px-2 py-0.5 rounded text-[10px] font-black tracking-widest uppercase">Active</span>
+        </div>
+      )}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-4xl mx-auto px-6 h-16 flex justify-between items-center font-bold">
-          <span className="text-royal hidden sm:block">Faz Scholars Challenge</span>
+          <span className="text-royal hidden sm:block">Faz Scholars' Challenge</span>
           <span className="text-slate-500 font-mono text-sm sm:hidden">{student.id}</span>
-          <div className={`flex items-center px-4 py-2 rounded-full border ${timeLeft < 60 ? 'bg-red-100 text-red-700 border-red-200 animate-pulse' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
-            <Clock className="w-4 h-4 mr-2" /> {formatTime(timeLeft)}
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setShowConfirmSubmit(true)}
+              className="bg-red-50 hover:bg-red-100 text-brand-red border border-red-200 px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm"
+              id="header-submit-btn"
+            >
+              Submit Exam
+            </button>
+            <div className={`flex items-center px-4 py-2 rounded-full border ${timeLeft < 60 ? 'bg-red-100 text-red-700 border-red-200 animate-pulse' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+              <Clock className="w-4 h-4 mr-2" /> {formatTime(timeLeft)}
+            </div>
           </div>
         </div>
       </div>
@@ -270,30 +403,41 @@ export default function ExamPortal() {
              {["A", "B", "C", "D"].map(optLabel => {
                const optionText = question[`option${optLabel}`];
                if(!optionText) return null;
+               
                const isSelected = answers[question.id] === optLabel;
+
+               let buttonClasses = "border-slate-100 hover:border-slate-300 hover:bg-slate-50";
+               let badgeClasses = "bg-slate-100 text-slate-500";
+               let textClasses = "text-slate-700";
+
+               if (isSelected) {
+                 buttonClasses = "border-royal bg-blue-50/50 ring-2 ring-royal ring-offset-1 shadow-sm";
+                 badgeClasses = "bg-royal text-white";
+                 textClasses = "text-royal font-bold";
+               }
+
                return (
                   <button
                     key={optLabel}
                     onClick={() => handleOptionSelect(question.id, optLabel)}
-                    className={`w-full flex items-center p-4 rounded-xl border-2 text-left transition-all ${
-                      isSelected 
-                        ? "border-royal bg-blue-50/50 ring-2 ring-royal ring-offset-1 shadow-sm" 
-                        : "border-slate-100 hover:border-slate-300 hover:bg-slate-50"
-                    }`}
+                    className={`w-full flex items-center p-4 rounded-xl border-2 text-left transition-all ${buttonClasses}`}
                   >
-                    <span className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm mr-4 flex-shrink-0 ${isSelected ? "bg-royal text-white" : "bg-slate-100 text-slate-500"}`}>{optLabel}</span>
-                    <span className={`text-base font-medium ${isSelected ? "text-royal" : "text-slate-700"}`}>{optionText}</span>
+                    <span className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm mr-4 flex-shrink-0 ${badgeClasses}`}>{optLabel}</span>
+                    <span className={`text-base font-medium ${textClasses}`}>{optionText}</span>
                   </button>
                )
              })}
           </div>
 
-          <div className="flex border-t border-slate-100 pt-8 justify-between items-center">
-            <button disabled={currentQ === 0} onClick={() => setCurrentQ(currentQ - 1)} className="text-slate-500 font-semibold hover:text-royal disabled:opacity-30 p-2">Previous</button>
+          <div className="flex border-t border-slate-100 pt-8 justify-between items-center block-action-bar">
+            <button disabled={currentQ === 0} onClick={() => setCurrentQ(currentQ - 1)} className="text-slate-500 font-semibold hover:text-royal disabled:opacity-30 p-2" id="prev-btn">Previous</button>
             {currentQ === questions.length - 1 ? (
-              <button onClick={handleSubmit} className="bg-brand-red text-white px-8 py-3 rounded-full font-bold shadow-md hover:bg-red-700 transform hover:scale-105 transition-all">Submit Exam</button>
+              <button onClick={() => setShowConfirmSubmit(true)} className="bg-brand-red text-white px-8 py-3 rounded-full font-bold shadow-md hover:bg-red-700 transform hover:scale-105 transition-all" id="footer-submit-finish-btn">Submit Exam</button>
             ) : (
-              <button onClick={handleNext} className="bg-royal text-white px-8 py-3 rounded-full font-bold shadow-md hover:bg-blue-900 transition-colors">Next</button>
+              <div className="flex items-center space-x-3">
+                <button type="button" onClick={() => setShowConfirmSubmit(true)} className="text-brand-red font-bold hover:text-red-700 px-4 py-2 rounded-lg text-sm transition" id="footer-submit-inter-btn">Submit Exam</button>
+                <button onClick={handleNext} className="bg-royal text-white px-8 py-3 rounded-full font-bold shadow-md hover:bg-blue-900 transition-colors" id="next-btn">Next</button>
+              </div>
             )}
           </div>
         </div>
@@ -304,6 +448,51 @@ export default function ExamPortal() {
           ))}
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {showConfirmSubmit && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" id="submit-confirm-modal">
+          <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl border border-slate-100 text-center animate-in fade-in zoom-in duration-200">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 text-brand-red">
+              <AlertCircle className="w-8 h-8" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-950 mb-2">Submit Your Exam?</h3>
+            <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+              Are you sure you want to end and submit your exam? Once submitted, you cannot change your answers nor access this round again.
+            </p>
+            <div className="bg-slate-50 rounded-xl p-4 mb-6 border border-slate-200/60 text-left">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Exam Progress</p>
+              <div className="flex justify-between text-sm font-semibold text-slate-700">
+                <span>Questions Attempted:</span>
+                <span className="font-bold text-royal">
+                  {Object.keys(answers).length} / {questions.length}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button 
+                type="button"
+                onClick={() => setShowConfirmSubmit(false)} 
+                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition"
+                id="cancel-submit-btn"
+              >
+                No, Keep Writing
+              </button>
+              <button 
+                type="button"
+                onClick={() => {
+                  setShowConfirmSubmit(false);
+                  handleSubmit();
+                }} 
+                className="flex-1 py-3 bg-brand-red hover:bg-red-700 text-white font-bold rounded-xl shadow-md transition"
+                id="confirm-submit-btn"
+              >
+                Yes, Submit Exam
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

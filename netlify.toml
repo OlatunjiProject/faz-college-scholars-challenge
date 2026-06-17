@@ -1,0 +1,43 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+
+# Rewrites API routing from /api/* to modern serverless function endpoints
+[[redirects]]
+  from = "/api/admin/login"
+  to = "/.netlify/functions/admin-portal"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/*"
+  to = "/.netlify/functions/admin-portal"
+  status = 200
+
+[[redirects]]
+  from = "/api/register"
+  to = "/.netlify/functions/auth-register"
+  status = 200
+
+[[redirects]]
+  from = "/api/login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+
+[[redirects]]
+  from = "/api/exam/*"
+  to = "/.netlify/functions/exam-engine"
+  status = 200
+
+[[redirects]]
+  from = "/api/grade"
+  to = "/.netlify/functions/exam-engine"
+  status = 200
+
+# Base rewrite for standard SPA routing compatibility with React Router
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

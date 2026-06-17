@@ -1,6 +1,6 @@
 {
-  "name": "Faz Scholars Challenge",
-  "description": "",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
+  "name": "Faz Scholars' Challenge",
+  "description": "A prestigious academic competition designed to celebrate and reward academic excellence.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

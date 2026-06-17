@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Administrator account credentials and recovery fields",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string" },
+        "recoveryEmail": { "type": "string" },
+        "recoveryQuestion": { "type": "string" },
+        "recoveryAnswer": { "type": "string" }
+      },
+      "required": ["username", "password", "role"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student candidate login credentials and profile fields",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "password": { "type": "string" },
+        "studentName": { "type": "string" },
+        "dob": { "type": "string" },
+        "parentName": { "type": "string" },
+        "parentEmail": { "type": "string" },
+        "parentPhone": { "type": "string" },
+        "school": { "type": "string" },
+        "studentClass": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "teacherEmail": { "type": "string" },
+        "teacherPhone": { "type": "string" },
+        "status": { "type": "string" },
+        "score": { "type": "string" }
+      },
+      "required": ["id", "password", "studentName", "parentName", "parentEmail", "status", "score"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "Exam question matching subjects and multiple round filters",
+      "type": "object",
+      "properties": {
+        "id": { "type": "integer" },
+        "subject": { "type": "string" },
+        "text": { "type": "string" },
+        "optionA": { "type": "string" },
+        "optionB": { "type": "string" },
+        "optionC": { "type": "string" },
+        "optionD": { "type": "string" },
+        "correct": { "type": "string" },
+        "round": { "type": "integer" }
+      },
+      "required": ["id", "subject", "text", "optionA", "optionB", "optionC", "optionD", "correct", "round"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Single-row global exam configuration",
+      "type": "object",
+      "properties": {
+        "round": { "type": "integer" },
+        "questionCount": { "type": "integer" },
+        "timeMinutes": { "type": "integer" },
+        "isLive": { "type": "boolean" }
+      },
+      "required": ["round", "questionCount", "timeMinutes", "isLive"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Administrative users table"
+    },
+    "/users/{studentId}": {
+      "schema": "Student",
+      "description": "Student candidates registered for the challenge"
+    },
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Challenge examination questions library"
+    },
+    "/settings/{settingsId}": {
+      "schema": "Settings",
+      "description": "Global settings for the application"
+    }
+  }
+}

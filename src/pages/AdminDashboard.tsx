@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Users, Settings, Database, Activity, Check, X, ShieldAlert, Award, LogOut, UserPlus, Upload, RefreshCw, Lock, Eye, EyeOff } from "lucide-react";
+import { Users, Settings, Database, Activity, Check, X, ShieldAlert, Award, LogOut, UserPlus, Upload, RefreshCw, Lock, Eye, EyeOff, Menu } from "lucide-react";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -10,8 +10,9 @@ export default function AdminDashboard() {
   const [isLive, setIsLive] = useState(false);
   const [students, setStudents] = useState<any[]>([]);
   const [subadmins, setSubadmins] = useState<any[]>([]);
-  const [settings, setSettings] = useState({ round: 1, questionCount: 10, timeMinutes: 30 });
+  const [settings, setSettings] = useState<any>({ round: 1, questionCount: 10, timeMinutes: 30, voiceActive: false });
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [dbQuestions, setDbQuestions] = useState<any[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [confirmState, setConfirmState] = useState<{
     isOpen: boolean; title: string; message: string; isPrompt?: boolean; promptLabel?: string; confirmStyle?: string; action: (val?: string) => void;
@@ -21,39 +22,90 @@ export default function AdminDashboard() {
   const [newSub, setNewSub] = useState({ username: "", password: "" });
   const [showNewSubPassword, setShowNewSubPassword] = useState(false);
   
-  // Security form
-  const [pwdForm, setPwdForm] = useState({ oldPassword: "", newPassword: "", confirmPassword: "" });
+  // Mobile Sidebar state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  
+  // Security form (Credentials & Password Recovery)
+  const [secForm, setSecForm] = useState({
+    oldPassword: "",
+    newUsername: "",
+    newPassword: "",
+    confirmPassword: "",
+    recoveryEmail: "",
+    recoveryQuestion: "",
+    recoveryAnswer: ""
+  });
   const [pwdStatus, setPwdStatus] = useState({ loading: false, message: "", type: "" });
 
-  const handleChangePassword = async (e: React.FormEvent) => {
+  useEffect(() => {
+    if (activeTab === "security" && admin) {
+      fetch(`/api/admin/credentials?username=${encodeURIComponent(admin.username)}`, {
+        headers: { "Authorization": `Bearer ${admin.token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            setSecForm(prev => ({
+              ...prev,
+              newUsername: data.username || "",
+              recoveryEmail: data.recoveryEmail || "",
+              recoveryQuestion: data.recoveryQuestion || "",
+              recoveryAnswer: ""
+            }));
+          }
+        })
+        .catch(err => console.error("Error loading profile", err));
+    }
+  }, [activeTab, admin]);
+
+  const handleUpdateCredentials = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pwdForm.newPassword !== pwdForm.confirmPassword) {
+    if (secForm.newPassword && secForm.newPassword !== secForm.confirmPassword) {
       setPwdStatus({ loading: false, message: "New passwords do not match", type: "error" });
       return;
     }
     setPwdStatus({ loading: true, message: "", type: "" });
     try {
-      const res = await fetch("/api/admin/change-password", {
+      const res = await fetch("/api/admin/change-credentials", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${admin.token}`
+        },
         body: JSON.stringify({
           username: admin.username,
-          oldPassword: pwdForm.oldPassword,
-          newPassword: pwdForm.newPassword
+          oldPassword: secForm.oldPassword,
+          newUsername: secForm.newUsername,
+          newPassword: secForm.newPassword,
+          recoveryEmail: secForm.recoveryEmail,
+          recoveryQuestion: secForm.recoveryQuestion,
+          recoveryAnswer: secForm.recoveryAnswer
         })
       });
       const data = await res.json();
       if (data.success) {
-        setPwdStatus({ loading: false, message: "Password updated successfully! Please login again.", type: "success" });
-        setPwdForm({ oldPassword: "", newPassword: "", confirmPassword: "" });
+        setPwdStatus({ loading: false, message: "Admin details updated successfully!", type: "success" });
+        // Update local state if username changed
+        const updatedAdmin = { ...admin, username: data.username };
+        localStorage.setItem("adminUser", JSON.stringify(updatedAdmin));
+        setAdmin(updatedAdmin);
+        
+        setSecForm(prev => ({
+          ...prev,
+          oldPassword: "",
+          newPassword: "",
+          confirmPassword: "",
+          recoveryAnswer: ""
+        }));
+        
         setTimeout(() => {
-          handleLogout();
-        }, 2000);
+          setPwdStatus({ loading: false, message: "", type: "" });
+        }, 4000);
       } else {
-        setPwdStatus({ loading: false, message: data.message || "Failed to update password", type: "error" });
+        setPwdStatus({ loading: false, message: data.message || "Failed to update credentials", type: "error" });
       }
     } catch {
-      setPwdStatus({ loading: false, message: "Server error", type: "error" });
+      setPwdStatus({ loading: false, message: "Server error updating details", type: "error" });
     }
   };
 
@@ -68,7 +120,12 @@ export default function AdminDashboard() {
   }, [navigate]);
 
   const fetchData = async () => {
-    const sRes = await fetch("/api/admin/users");
+    const storedUser = JSON.parse(localStorage.getItem("adminUser") || "{}");
+    const token = storedUser.token;
+
+    const sRes = await fetch("/api/admin/users", {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
     const sData = await sRes.json();
     if(sData.success) setStudents(sData.users);
 
@@ -78,12 +135,47 @@ export default function AdminDashboard() {
       setIsLive(stData.settings.isLive);
       setSettings(stData.settings);
     }
+
+    const qRes = await fetch("/api/admin/questions", {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    const qData = await qRes.json();
+    if(qData.success) setDbQuestions(qData.questions);
     
-    if (JSON.parse(localStorage.getItem("adminUser") || "{}").role === 'main_admin') {
-      const subRes = await fetch("/api/admin/subadmins");
+    if (storedUser.role === 'main_admin') {
+      const subRes = await fetch("/api/admin/subadmins", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
       const subData = await subRes.json();
       if(subData.success) setSubadmins(subData.subadmins);
     }
+  };
+
+  const deleteSingleQuestion = (docId: string, qText: string) => {
+    setConfirmState({
+      isOpen: true,
+      title: "Delete Question",
+      message: `Are you sure you want to delete this question? "${qText.substring(0, 40)}..."`,
+      confirmStyle: "bg-red-600 hover:bg-red-700",
+      action: async () => {
+        const storedUser = JSON.parse(localStorage.getItem("adminUser") || "{}");
+        const res = await fetch("/api/admin/questions/delete", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${storedUser.token}`
+          },
+          body: JSON.stringify({ docId })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert("Question deleted successfully!");
+          fetchData();
+        } else {
+          alert(data.message || "Failed to delete question");
+        }
+      }
+    });
   };
 
   const handleLogout = () => {
@@ -95,7 +187,10 @@ export default function AdminDashboard() {
     try {
       await fetch("/api/admin/users/action", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${admin.token}`
+        },
         body: JSON.stringify({ ids, action })
       });
       fetchData();
@@ -134,7 +229,10 @@ export default function AdminDashboard() {
     try {
       await fetch("/api/admin/settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${admin.token}`
+        },
         body: JSON.stringify({ isLive: status })
       });
       setIsLive(status);
@@ -147,10 +245,31 @@ export default function AdminDashboard() {
     e.preventDefault();
     await fetch("/api/admin/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${admin.token}`
+      },
       body: JSON.stringify(settings)
     });
     alert("Settings saved!");
+  };
+
+  const adjustTime = async (minutes: number) => {
+    const newTime = Math.max(1, (settings.timeMinutes || 30) + minutes);
+    const updated = { ...settings, timeMinutes: newTime };
+    setSettings(updated);
+    try {
+      await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${admin.token}`
+        },
+        body: JSON.stringify(updated)
+      });
+    } catch {
+      alert("Failed to adjust time limit");
+    }
   };
 
   const uploadQuestions = async () => {
@@ -161,13 +280,17 @@ export default function AdminDashboard() {
       try {
         const res = await fetch("/api/admin/questions/upload", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${admin.token}`
+          },
           body: JSON.stringify({ csvData: text })
         });
         const data = await res.json();
         if(data.success) {
           alert("Questions uploaded and parsed via CSV!");
           setCsvFile(null);
+          fetchData();
         } else {
           alert(data.message || "Failed to upload.");
         }
@@ -182,8 +305,12 @@ export default function AdminDashboard() {
      setConfirmState({
        isOpen: true, title: "Clear All Questions", message: "DANGER: This will delete ALL questions. Proceed?", confirmStyle: "bg-red-600 hover:bg-red-700",
        action: async () => {
-         await fetch("/api/admin/questions/clear", { method: "POST" });
+         await fetch("/api/admin/questions/clear", { 
+           method: "POST",
+           headers: { "Authorization": `Bearer ${admin.token}` }
+         });
          alert("Questions cleared!");
+         fetchData();
        }
      });
   };
@@ -192,7 +319,10 @@ export default function AdminDashboard() {
      setConfirmState({
        isOpen: true, title: "Clear All Students", message: "DANGER: This will delete ALL student records permanently. Make sure you have exported the CSV first! Proceed?", confirmStyle: "bg-red-600 hover:bg-red-700",
        action: async () => {
-         await fetch("/api/admin/users/clear", { method: "POST" });
+         await fetch("/api/admin/users/clear", { 
+           method: "POST",
+           headers: { "Authorization": `Bearer ${admin.token}` }
+         });
          fetchData();
        }
      });
@@ -200,8 +330,21 @@ export default function AdminDashboard() {
 
   const exportCSV = () => {
     if(students.length === 0) return;
-    const header = Object.keys(students[0]).join(",");
-    const rows = students.map(s => Object.values(s).map(v => `"${v}"`).join(",")).join("\n");
+    const columns: string[] = [
+      "id", "studentName", "passwordClear", "status", "score", "dob",
+      "parentName", "parentEmail", "parentPhone", "school",
+      "studentClass", "teacherName", "teacherEmail", "teacherPhone"
+    ];
+    
+    // Header labels (mapping passwordClear key to 'password' label for ease of usage)
+    const header = columns.map(c => c === "passwordClear" ? "password" : c).join(",");
+    const rows = students.map(s => {
+      return columns.map(col => {
+        const val = (s as any)[col] ?? "";
+        return `"${String(val).replace(/"/g, '""')}"`;
+      }).join(",");
+    }).join("\n");
+
     const blob = new Blob([`${header}\n${rows}`], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -218,7 +361,10 @@ export default function AdminDashboard() {
        action: async () => {
          await fetch("/api/admin/remove-subadmin", {
            method: "POST",
-           headers: { "Content-Type": "application/json" },
+           headers: { 
+             "Content-Type": "application/json",
+             "Authorization": `Bearer ${admin.token}`
+           },
            body: JSON.stringify({ username, creatorRole: admin.role })
          });
          fetchData();
@@ -231,7 +377,10 @@ export default function AdminDashboard() {
     try {
       const res = await fetch("/api/admin/add-subadmin", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${admin.token}`
+        },
         body: JSON.stringify({ ...newSub, creatorRole: admin.role })
       });
       const data = await res.json();
@@ -249,30 +398,38 @@ export default function AdminDashboard() {
   if (!admin) return null;
 
   return (
-    <div className="flex h-screen bg-slate-100 font-sans">
+    <div className="flex h-screen bg-slate-100 font-sans relative">
+      {/* Sidebar background overlay for mobile */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-40 md:hidden" 
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <div className="w-64 bg-royal text-white flex flex-col">
+      <div className={`fixed inset-y-0 left-0 transform ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 md:relative md:flex w-64 bg-royal text-white flex flex-col transition-transform duration-300 ease-in-out z-50`}>
         <div className="p-6">
            <h1 className="text-xl font-extrabold tracking-tight">FAZ ADMIN<span className="text-brand-red">.</span></h1>
            <p className="text-blue-300 text-xs mt-1 uppercase tracking-wider font-semibold">Command Center</p>
            <p className="text-white text-xs mt-4 opacity-50">Logged in as: {admin.username} ({admin.role})</p>
         </div>
         <nav className="flex-1 px-4 space-y-2 mt-4">
-          <button onClick={() => setActiveTab("students")} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "students" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
+          <button onClick={() => { setActiveTab("students"); setSidebarOpen(false); }} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "students" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
             <Users className="w-5 h-5 mr-3 opacity-80" /> Participants
           </button>
-          <button onClick={() => setActiveTab("questions")} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "questions" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
+          <button onClick={() => { setActiveTab("questions"); setSidebarOpen(false); }} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "questions" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
             <Database className="w-5 h-5 mr-3 opacity-80" /> Question Bank
           </button>
-          <button onClick={() => setActiveTab("config")} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "config" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
+          <button onClick={() => { setActiveTab("config"); setSidebarOpen(false); }} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "config" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
             <Settings className="w-5 h-5 mr-3 opacity-80" /> Exam Configuration
           </button>
           {admin.role === "main_admin" && (
             <>
-              <button onClick={() => setActiveTab("subadmin")} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "subadmin" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
+              <button onClick={() => { setActiveTab("subadmin"); setSidebarOpen(false); }} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "subadmin" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
                 <UserPlus className="w-5 h-5 mr-3 opacity-80" /> Sub-Admins
               </button>
-              <button onClick={() => setActiveTab("security")} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "security" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
+              <button onClick={() => { setActiveTab("security"); setSidebarOpen(false); }} className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${activeTab === "security" ? "bg-blue-800 text-white" : "text-blue-200 hover:bg-blue-900"}`}>
                 <Lock className="w-5 h-5 mr-3 opacity-80" /> Security
               </button>
             </>
@@ -287,17 +444,26 @@ export default function AdminDashboard() {
       {/* Main Content */}
       <div className="flex-1 overflow-auto">
         {/* Header */}
-        <header className="bg-white px-8 py-4 border-b border-slate-200 flex justify-between items-center shadow-sm sticky top-0 z-10">
-          <h2 className="text-xl font-bold text-slate-800 capitalize">{activeTab.replace("-", " ")}</h2>
-          <div className="flex items-center space-x-4">
-            <span className="text-sm font-bold text-slate-500">System Status:</span>
-            <span className={`px-3 py-1 text-xs font-bold uppercase rounded-full border ${isLive ? 'bg-red-50 text-brand-red border-red-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+        <header className="bg-white px-4 md:px-8 py-4 border-b border-slate-200 flex justify-between items-center shadow-sm sticky top-0 z-10">
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={() => setSidebarOpen(true)} 
+              className="md:hidden text-slate-600 hover:text-royal focus:outline-none p-1.5 hover:bg-slate-100 rounded-lg"
+              aria-label="Open Sidebar"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+            <h2 className="text-lg md:text-xl font-bold text-slate-800 capitalize">{activeTab.replace("-", " ")}</h2>
+          </div>
+          <div className="flex items-center space-x-2 md:space-x-4">
+            <span className="text-xs md:text-sm font-bold text-slate-500 hidden sm:inline">System Status:</span>
+            <span className={`px-2.5 md:px-3 py-1 text-[10px] md:text-xs font-bold uppercase rounded-full border ${isLive ? 'bg-red-50 text-brand-red border-red-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
               {isLive ? 'LIVE' : 'OFFLINE'}
             </span>
           </div>
         </header>
 
-        <main className="p-8">
+        <main className="p-4 md:p-8">
           {activeTab === "config" && (
             <div className="space-y-8 max-w-4xl">
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
@@ -329,50 +495,194 @@ export default function AdminDashboard() {
                 <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center">
                   <Settings className="w-5 h-5 mr-2 text-royal" /> Exam Rules
                 </h3>
-                <form onSubmit={updateSettings} className="space-y-4">
-                  <div className="grid grid-cols-3 gap-6">
+                <form onSubmit={updateSettings} className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
                       <label className="block text-sm font-bold text-slate-700 mb-2">Current Round</label>
-                      <input type="number" className="w-full px-4 py-2 border rounded-xl" value={settings.round} onChange={e=>setSettings({...settings, round: parseInt(e.target.value)})} />
+                      <input type="number" className="w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-royal focus:outline-none" value={settings.round} onChange={e=>setSettings({...settings, round: parseInt(e.target.value)})} />
                     </div>
                     <div>
                       <label className="block text-sm font-bold text-slate-700 mb-2">Max Questions</label>
-                      <input type="number" className="w-full px-4 py-2 border rounded-xl" value={settings.questionCount} onChange={e=>setSettings({...settings, questionCount: parseInt(e.target.value)})} />
+                      <input type="number" className="w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-royal focus:outline-none" value={settings.questionCount} onChange={e=>setSettings({...settings, questionCount: parseInt(e.target.value)})} />
                     </div>
                     <div>
                       <label className="block text-sm font-bold text-slate-700 mb-2">Time (Minutes)</label>
-                      <input type="number" className="w-full px-4 py-2 border rounded-xl" value={settings.timeMinutes} onChange={e=>setSettings({...settings, timeMinutes: parseInt(e.target.value)})} />
+                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                        <input type="number" className="w-full sm:w-24 px-4 py-2 border rounded-xl focus:ring-2 focus:ring-royal focus:outline-none" value={settings.timeMinutes} onChange={e=>setSettings({...settings, timeMinutes: parseInt(e.target.value)})} />
+                      </div>
                     </div>
                   </div>
-                  <button type="submit" className="bg-royal text-white px-6 py-2 rounded-xl font-bold">Save Settings</button>
+
+                  <button type="submit" className="bg-royal text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-900 shadow-sm transition">Save Settings</button>
                 </form>
               </div>
             </div>
           )}
 
+          {false && (
+            <div className="space-y-8 max-w-4xl animate-fade-in text-slate-700">
+
+              {/* Steps Guide */}
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 space-y-6">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Connection Tutorial Guide</h3>
+                  <p className="text-xs text-slate-500">Enable complete Airtable integration by completing these steps precisely.</p>
+                </div>
+
+                <div className="space-y-6 relative border-l-2 border-slate-100 pl-6 ml-2">
+                  {/* Step 1 */}
+                  <div className="relative">
+                    <div className="absolute -left-10 top-0 bg-blue-50 text-blue-700 border-2 border-blue-100 flex items-center justify-center font-bold text-xs w-6 h-6 rounded-full">
+                      1
+                    </div>
+                    <h4 className="font-bold text-sm text-slate-800">Generate Personal Access Token (PAT)</h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Go to <a href="https://airtable.com/create/tokens" target="_blank" rel="noreferrer" className="text-royal underline font-bold">Airtable Token Creator</a> and generate a developer Personal Access Token.
+                    </p>
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 mt-2 text-xs">
+                      <p className="font-bold text-slate-600 uppercase text-[10px] mb-1">Required Scopes:</p>
+                      <code className="text-[11px] text-blue-800 block">data.records:read , data.records:write</code>
+                    </div>
+                  </div>
+
+                  {/* Step 2 */}
+                  <div className="relative">
+                    <div className="absolute -left-10 top-0 bg-blue-50 text-blue-700 border-2 border-blue-100 flex items-center justify-center font-bold text-xs w-6 h-6 rounded-full">
+                      2
+                    </div>
+                    <h4 className="font-bold text-sm text-slate-800">Assign Environment Variables</h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Configure your local <code>.env</code> file or add variables inside the AI Studio Settings secrets panel.
+                    </p>
+                    <pre className="bg-slate-950 text-amber-400 p-4 rounded-xl text-xs font-mono select-all overflow-x-auto mt-2">
+{`AIRTABLE_API_KEY=your_personal_access_token_here
+AIRTABLE_BASE_ID=appxxxxxxxxxxxx`}
+                    </pre>
+                  </div>
+
+                  {/* Step 3 */}
+                  <div className="relative">
+                    <div className="absolute -left-10 top-0 bg-blue-50 text-blue-700 border-2 border-blue-100 flex items-center justify-center font-bold text-xs w-6 h-6 rounded-full">
+                      3
+                    </div>
+                    <h4 className="font-bold text-sm text-slate-800 mb-2">Create the 4 Tables & Exact Columns Schema</h4>
+                    <p className="text-xs text-slate-500 mb-4">
+                      Create these 4 tables in your base. Make sure column names are exact (case-sensitive) so our REST backend maps them correctly:
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Admins Table Info */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 hover:shadow-xs transition">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="px-2 py-0.5 bg-rose-50 border border-rose-200 text-rose-700 rounded text-[10px] font-bold">Table 1</span>
+                          <span className="font-bold text-xs text-slate-800">Admins</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mb-2">Manages administrator roles and security questions.</p>
+                        <div className="text-[11px] bg-slate-50 p-2 rounded border border-slate-100 font-mono space-y-1">
+                          <div><strong>username</strong> <span className="text-slate-400">(Single Line Text) *Primary Field</span></div>
+                          <div><strong>password</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>role</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>recoveryEmail</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>recoveryQuestion</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>recoveryAnswer</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                        </div>
+                      </div>
+
+                      {/* Students Table Info */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 hover:shadow-xs transition">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="px-2 py-0.5 bg-sky-50 border border-sky-200 text-sky-700 rounded text-[10px] font-bold">Table 2</span>
+                          <span className="font-bold text-xs text-slate-800">Students</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mb-2">Tracks exam participants, registration options, and grades.</p>
+                        <div className="text-[11px] bg-slate-50 p-2 rounded border border-slate-100 font-mono space-y-1">
+                          <div><strong>id</strong> <span className="text-slate-400">(Single Line Text) *Primary Field</span></div>
+                          <div><strong>studentName</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>passwordClear</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>dob</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>parentName</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>parentEmail</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>parentPhone</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>school</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>studentClass</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>status</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>score</strong> <span className="text-slate-400">(Single Line Text / Number)</span></div>
+                        </div>
+                      </div>
+
+                      {/* Questions Table Info */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 hover:shadow-xs transition">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="px-2 py-0.5 bg-amber-50 border border-amber-200 text-amber-700 rounded text-[10px] font-bold">Table 3</span>
+                          <span className="font-bold text-xs text-slate-800">Questions</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mb-2">Stores exam multi-choice questions by subjects.</p>
+                        <div className="text-[11px] bg-slate-50 p-2 rounded border border-slate-100 font-mono space-y-1">
+                          <div><strong>id</strong> <span className="text-slate-400">(Number) *Primary Field</span></div>
+                          <div><strong>subject</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>text</strong> <span className="text-slate-400">(Long Text / Multiline)</span></div>
+                          <div><strong>optionA</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>optionB</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>optionC</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>optionD</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>correct</strong> <span className="text-slate-400">(Single Line Text)</span></div>
+                          <div><strong>round</strong> <span className="text-slate-400">(Number)</span></div>
+                        </div>
+                      </div>
+
+                      {/* Settings Table Info */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 hover:shadow-xs transition">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="px-2 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded text-[10px] font-bold">Table 4</span>
+                          <span className="font-bold text-xs text-slate-800">Settings</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mb-2">Holds active global settings like rounds, counts, timers.</p>
+                        <div className="text-[11px] bg-slate-50 p-2 rounded border border-slate-100 font-mono space-y-1">
+                          <div><strong>key</strong> <span className="text-slate-400">(Single Line Text) *Set column value as: "global"</span></div>
+                          <div><strong>round</strong> <span className="text-slate-400">(Number)</span></div>
+                          <div><strong>questionCount</strong> <span className="text-slate-400">(Number)</span></div>
+                          <div><strong>timeMinutes</strong> <span className="text-slate-400">(Number)</span></div>
+                          <div><strong>isLive</strong> <span className="text-slate-400">(Checkbox / Boolean)</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-blue-50 text-blue-800 rounded-xl border border-blue-200 text-xs shadow-xs space-y-2">
+                  <p className="font-bold flex items-center gap-1"><RefreshCw className="w-4 h-4" /> Seamless Drop-In Backend Logic</p>
+                  <p>Our serverless backend (built under <code>netlify/functions/utils/airtableConnector.ts</code>) is pre-configured with the standard Airtable REST API. Simply filling the Environment Key triggers the database handler to automatically swap and map queries directly to your Airtable sheets without any UI disruption!</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === "questions" && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-4xl">
-               <div className="p-6 border-b border-slate-100">
-                 <h3 className="text-lg font-bold text-slate-800">Upload Question Bank (CSV)</h3>
-                 <p className="text-sm text-slate-500 mt-1">Make sure your CSV file has the following header row exact names (case-sensitive):</p>
-                 <code className="text-xs bg-slate-100 p-2 rounded mt-2 block">id,text,optionA,optionB,optionC,optionD,correct</code>
-               </div>
-               <div className="p-6 space-y-4">
-                 <input 
-                   type="file"
-                   accept=".csv"
-                   className="w-full border border-slate-200 rounded-xl p-4 text-sm focus:ring-2 focus:ring-royal file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                   onChange={(e) => setCsvFile(e.target.files ? e.target.files[0] : null)}
-                 />
-                 <div className="flex gap-4">
-                   <button onClick={uploadQuestions} disabled={!csvFile} className="bg-brand-red text-white py-3 px-6 rounded-xl font-bold flex items-center hover:bg-red-700 disabled:opacity-50">
-                     <Upload className="w-4 h-4 mr-2"/> Parse and Save Questions
-                   </button>
-                   <button onClick={clearQuestions} className="bg-red-50 text-red-600 border border-red-200 py-3 px-6 rounded-xl font-bold hover:bg-red-100">
-                     Clear All Questions
-                   </button>
+            <div className="space-y-6 max-w-5xl">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                 <div className="p-6 border-b border-slate-100">
+                   <h3 className="text-lg font-bold text-slate-800">Upload Question Bank (CSV)</h3>
+                   <p className="text-sm text-slate-500 mt-1">Make sure your CSV file has the following header row exact names (case-sensitive):</p>
+                   <code className="text-xs bg-slate-100 p-2 rounded mt-2 block">id,text,optionA,optionB,optionC,optionD,correct</code>
                  </div>
-               </div>
+                 <div className="p-6 space-y-4">
+                   <input 
+                     type="file"
+                     accept=".csv"
+                     className="w-full border border-slate-200 rounded-xl p-4 text-sm focus:ring-2 focus:ring-royal file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                     onChange={(e) => setCsvFile(e.target.files ? e.target.files[0] : null)}
+                   />
+                   <div className="flex gap-4">
+                     <button onClick={uploadQuestions} disabled={!csvFile} className="bg-brand-red text-white py-3 px-6 rounded-xl font-bold flex items-center hover:bg-red-700 disabled:opacity-50">
+                       <Upload className="w-4 h-4 mr-2"/> Parse and Save Questions
+                     </button>
+                     <button onClick={clearQuestions} className="bg-red-50 text-red-600 border border-red-200 py-3 px-6 rounded-xl font-bold hover:bg-red-100">
+                       Clear All Questions
+                     </button>
+                   </div>
+                 </div>
+              </div>
+
             </div>
           )}
 
@@ -477,28 +787,75 @@ export default function AdminDashboard() {
           )}
 
           {activeTab === "security" && admin.role === "main_admin" && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 w-full max-w-md">
-              <h3 className="text-lg font-bold text-slate-800 mb-6">Change Password</h3>
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-8 w-full max-w-lg">
+              <h3 className="text-xl font-bold text-slate-800 mb-2">Credentials & Recovery Configuration</h3>
+              <p className="text-slate-500 text-sm mb-6">Manage access permissions, administrator credentials, and set up your self-service recovery method.</p>
+              
               {pwdStatus.message && (
-                <div className={`p-4 mb-6 rounded-lg text-sm font-semibold flex items-center ${pwdStatus.type === "error" ? "bg-red-50 text-red-600" : "bg-green-50 text-green-600"}`}>
-                  {pwdStatus.type === "error" ? <X className="w-4 h-4 mr-2" /> : <Check className="w-4 h-4 mr-2" />} {pwdStatus.message}
+                <div className={`p-4 mb-6 rounded-xl text-sm font-semibold flex items-center ${pwdStatus.type === "error" ? "bg-red-50 text-red-600 border border-red-100" : "bg-green-50 text-green-600 border border-green-100"}`}>
+                  {pwdStatus.type === "error" ? <X className="w-4 h-4 mr-2 shrink-0" /> : <Check className="w-4 h-4 mr-2 shrink-0" />} {pwdStatus.message}
                 </div>
               )}
-              <form onSubmit={handleChangePassword} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Previous Password</label>
-                  <input type="password" required className="w-full px-4 py-2 border rounded-xl" value={pwdForm.oldPassword} onChange={e=>setPwdForm({...pwdForm, oldPassword: e.target.value})} />
+              
+              <form onSubmit={handleUpdateCredentials} className="space-y-6">
+                {/* Credentials Section */}
+                <div className="space-y-4">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-slate-400">Admin Login Credentials</h4>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Administrator Username</label>
+                    <input type="text" required className="w-full px-4 py-2 flex rounded-xl border border-slate-200 bg-slate-50 focus:bg-white" value={secForm.newUsername} onChange={e=>setSecForm({...secForm, newUsername: e.target.value})} />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">New Password (Optional)</label>
+                      <input type="password" placeholder="Leave blank to keep same" className="w-full px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white" value={secForm.newPassword} onChange={e=>setSecForm({...secForm, newPassword: e.target.value})} />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1">Confirm New Password</label>
+                      <input type="password" placeholder="Leave blank to keep same" className="w-full px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white" value={secForm.confirmPassword} onChange={e=>setSecForm({...secForm, confirmPassword: e.target.value})} />
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">New Password</label>
-                  <input type="password" required className="w-full px-4 py-2 border rounded-xl" value={pwdForm.newPassword} onChange={e=>setPwdForm({...pwdForm, newPassword: e.target.value})} />
+
+                <hr className="border-slate-100" />
+
+                {/* Recovery Methods */}
+                <div className="space-y-4">
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-slate-400">Forgot-Password Recovery Method</h4>
+                  
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Recovery Email Address</label>
+                    <input type="email" required className="w-full px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white" placeholder="admin@example.com" value={secForm.recoveryEmail} onChange={e=>setSecForm({...secForm, recoveryEmail: e.target.value})} />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Security Question</label>
+                    <select required className="w-full px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white" value={secForm.recoveryQuestion} onChange={e=>setSecForm({...secForm, recoveryQuestion: e.target.value})}>
+                      <option value="What is your favorite academic subject?">What is your favorite academic subject?</option>
+                      <option value="What was the name of your first school?">What was the name of your first school?</option>
+                      <option value="What city were you born in?">What city were you born in?</option>
+                      <option value="What was your first childhood pet's name?">What was your first childhood pet's name?</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1">Security Answer</label>
+                    <input type="text" placeholder="Enter answer (case-insensitive)" className="w-full px-4 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white" value={secForm.recoveryAnswer} onChange={e=>setSecForm({...secForm, recoveryAnswer: e.target.value})} />
+                    <p className="text-[11px] text-slate-400 mt-1">Provide a strong, unique, memorable answer.</p>
+                  </div>
                 </div>
+
+                <hr className="border-slate-100" />
+
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Confirm New Password</label>
-                  <input type="password" required className="w-full px-4 py-2 border rounded-xl" value={pwdForm.confirmPassword} onChange={e=>setPwdForm({...pwdForm, confirmPassword: e.target.value})} />
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Authorize Changes (Confirm Current Password)</label>
+                  <input type="password" required placeholder="Enter current admin password" className="w-full px-4 py-2 border-2 border-royal/30 rounded-xl focus:ring-2 focus:ring-royal focus:border-transparent" value={secForm.oldPassword} onChange={e=>setSecForm({...secForm, oldPassword: e.target.value})} />
                 </div>
-                <button type="submit" disabled={pwdStatus.loading} className="w-full bg-royal text-white px-6 py-3 rounded-xl font-bold disabled:opacity-70">
-                  {pwdStatus.loading ? "Updating..." : "Update Password"}
+
+                <button type="submit" disabled={pwdStatus.loading} className="w-full bg-royal hover:bg-blue-900 text-white px-6 py-3.5 rounded-xl font-bold disabled:opacity-75 transition duration-150">
+                  {pwdStatus.loading ? "Saving Changes..." : "Save Credentials & Recovery"}
                 </button>
               </form>
             </div>
@@ -548,7 +905,7 @@ export default function AdminDashboard() {
                 </div>
                 <div className="bg-slate-50 p-4 rounded-xl">
                    <p className="text-slate-500 mb-1">Password</p>
-                   <p className="font-bold font-mono text-brand-red">{selectedStudent.password}</p>
+                   <p className="font-bold font-mono text-brand-red">{selectedStudent.passwordClear || "Pre-existing (Bcrypt)"}</p>
                 </div>
                 <div className="bg-slate-50 p-4 rounded-xl">
                    <p className="text-slate-500 mb-1">Score</p>

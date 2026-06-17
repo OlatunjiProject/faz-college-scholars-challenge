@@ -79,20 +79,20 @@ export default function Registration() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-50 flex flex-col py-6 px-4 md:py-12 sm:px-6 lg:px-8">
       <div className="max-w-3xl w-full mx-auto">
-        <Link to="/" className="inline-flex items-center text-sm font-medium text-slate-500 hover:text-royal mb-8 transition-colors">
+        <Link to="/" className="inline-flex items-center text-sm font-medium text-slate-500 hover:text-royal mb-6 md:mb-8 transition-colors">
           <ArrowLeft className="w-4 h-4 mr-2" /> Back to Home
         </Link>
         
-        <div className="bg-white rounded-[2rem] shadow-xl overflow-hidden border border-slate-100">
-          <div className="bg-royal py-8 px-10 relative overflow-hidden">
+        <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] shadow-xl overflow-hidden border border-slate-100">
+          <div className="bg-royal py-6 px-6 md:py-8 md:px-10 relative overflow-hidden">
              <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-bl-full -mr-16 -mt-16"></div>
-             <h2 className="text-3xl font-extrabold text-white tracking-tight relative z-10">Scholar Registration</h2>
-             <p className="text-blue-200 mt-2 relative z-10">Enter details carefully. ID sets are permanent.</p>
+             <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight relative z-10">Scholar Registration</h2>
+             <p className="text-blue-200 text-xs md:text-sm mt-2 relative z-10">Enter details carefully. ID sets are permanent.</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="p-10 space-y-10">
+          <form onSubmit={handleSubmit} className="p-6 md:p-10 space-y-6 md:space-y-10">
             {errorStatus && (
               <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-bold border border-red-100 uppercase tracking-wide">
                 {errorStatus}
